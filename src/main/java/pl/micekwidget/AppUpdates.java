@@ -1,7 +1,5 @@
 package pl.micekwidget;
 
-import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -28,12 +26,12 @@ final class AppUpdates {
     private static final String REPO = "https://github.com/miz3x/MicekApp/releases/download/";
     private static final String LATEST = "https://api.github.com/repos/miz3x/MicekApp/releases/latest";
     private static final long MAX_APK = 50L * 1024 * 1024;
-    private final Activity activity;
+    private final MainActivity activity;
     private final Executor executor;
     private Release awaitingPermission;
     private boolean busy;
 
-    AppUpdates(Activity activity, Executor executor) {
+    AppUpdates(MainActivity activity, Executor executor) {
         this.activity = activity;
         this.executor = executor;
     }
@@ -60,10 +58,9 @@ final class AppUpdates {
                 busy = false;
                 if (!alive()) return;
                 if (release != null) {
-                    dialog().setTitle("Dostępna aktualizacja " + release.version)
-                            .setMessage("Pobrać i zainstalować nową wersję MicekApp z GitHuba?")
-                            .setNegativeButton("Później", null)
-                            .setPositiveButton("Pobierz", (dialog, which) -> prepare(release)).show();
+                    activity.confirmDialog("Dostępna aktualizacja", "MicekApp " + release.version,
+                            "Nowa wersja jest dostępna w GitHub Releases.", "Pobierz aktualizację", "Później",
+                            () -> prepare(release));
                 } else if (manual) show(failure == null ? "Masz najnowszą wersję" : failure);
             });
         });
@@ -73,9 +70,8 @@ final class AppUpdates {
         if (activity.getPackageManager().canRequestPackageInstalls()) {
             download(release);
         } else {
-            dialog().setTitle("Zezwól na instalację aktualizacji")
-                    .setMessage("Android wymaga zgody na instalowanie aktualizacji przez MicekApp.")
-                    .setNegativeButton("Anuluj", null).setPositiveButton("Ustawienia", (dialog, which) -> {
+            activity.confirmDialog("Zezwól na instalację", "", "Android wymaga zgody na instalowanie aktualizacji przez MicekApp.",
+                    "Otwórz ustawienia", "Anuluj", () -> {
                         try {
                             awaitingPermission = release;
                             activity.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -84,7 +80,7 @@ final class AppUpdates {
                             awaitingPermission = null;
                             show("Nie można otworzyć ustawień instalacji.");
                         }
-                    }).show();
+                    });
         }
     }
 
@@ -238,11 +234,6 @@ final class AppUpdates {
         } finally {
             if (connection != null) connection.disconnect();
         }
-    }
-
-    private AlertDialog.Builder dialog() {
-        return new AlertDialog.Builder(activity, new AppColors(activity).light
-                ? android.R.style.Theme_Material_Light_Dialog_Alert : android.R.style.Theme_Material_Dialog_Alert);
     }
 
     private boolean alive() { return !activity.isFinishing() && !activity.isDestroyed(); }

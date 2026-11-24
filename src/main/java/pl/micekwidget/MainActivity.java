@@ -136,6 +136,7 @@ public class MainActivity extends Activity {
                 welcomeClass = new SchoolPlan.ClassPlan(state.getString("welcomeClassName", ""),
                         state.getString("welcomeClassUrl", ""));
                 if (welcomeClass.url.startsWith(SchoolPlan.BASE + "T/")) school = "T";
+                else if (welcomeClass.url.startsWith("teacher:")) school = "teacher";
             }
         }
         if (welcomeStep == 3) settings = true;
@@ -345,26 +346,25 @@ public class MainActivity extends Activity {
         addTop(content, label("MicekApp", 16, ACCENT, true), 30);
         if (welcomeStep == 1) {
             addTop(content, label("Witaj w MicekApp!", 30, INK, true), 12);
-            message(content, "Twój plan lekcji", "Wybierz klasę, aby zobaczyć lekcje i zastępstwa.");
-            Button next = button("Wybierz swoją klasę", SELECTED, ACCENT);
+            message(content, "Twój plan lekcji", "Wybierz swoją klasę lub nauczyciela, aby zobaczyć plan zajęć.");
+            Button next = button("Wybierz klasę lub nauczyciela", SELECTED, ACCENT);
             next.setOnClickListener(view -> {
                 AppMotion.remember(this, root);
                 welcomePicker = true;
-                showPicker(school.equals("T") ? "T" : "LO");
+                showPicker(school.equals("teacher") || school.equals("T") ? school : "LO");
             });
             addTop(content, next, 15);
         } else {
             addTop(content, label("Dostosuj aplikację do siebie", 28, INK, true), 12);
-            message(content, "Klasa " + shortName(prefs.getString("name", "")),
+            String name = prefs.getString("name", "");
+            boolean teacher = prefs.getString("url", "").startsWith("teacher:");
+            message(content, teacher ? "Plan nauczyciela · " + name : "Klasa " + shortName(name),
                     "W ustawieniach dopasujesz wygląd, powiadomienia i widżety.");
             Button settingsButton = button("Przejdź do ustawień", SELECTED, ACCENT);
             settingsButton.setOnClickListener(view -> {
-                AppMotion.remember(this, root);
                 welcomeStep = 3;
-                settings = true;
+                openSettings();
                 prefs.edit().putInt("welcomeStep", 3).apply();
-                renderSettings();
-                animateContent();
             });
             addTop(content, settingsButton, 15);
         }
@@ -491,11 +491,7 @@ public class MainActivity extends Activity {
         preferences.setTextSize(20);
         preferences.setContentDescription("Ustawienia");
         toolbar.addView(preferences, new LinearLayout.LayoutParams(dp(50), dp(48)));
-        preferences.setOnClickListener(view -> {
-            AppMotion.remember(this, root);
-            renderSettings();
-            animateContent();
-        });
+        preferences.setOnClickListener(view -> openSettings());
         addTop(content, toolbar, 8);
         addTop(content, label(dateLabel + (name.isEmpty() ? "" : " · " + (teacher ? name : shortName(name))),
                 14, MUTED, false), 16);
@@ -522,7 +518,7 @@ public class MainActivity extends Activity {
                 : !prefs.contains("week") ? "Plan lekcji" : prefix + count + " " + unit;
         addTop(content, label(greeting, 30, INK, true), 6);
         if (name.isEmpty()) {
-            menuButton("Ustaw plan", this::renderSettings);
+            menuButton("Ustaw plan", this::openSettings);
         } else {
             LinearLayout focus = column();
             GradientDrawable gradient = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
@@ -668,6 +664,12 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -1, 1);
         if (tiles.getChildCount() > 0) size.setMarginStart(dp(9));
         tiles.addView(tile, size);
+    }
+
+    private void openSettings() {
+        AppMotion.remember(this, root);
+        renderSettings();
+        AppMotion.enter(root);
     }
 
     private void renderSettings() {
@@ -995,7 +997,7 @@ public class MainActivity extends Activity {
         if (isWidgetConfiguration()) addWidgetThemes(header);
         LinearLayout tabs = row();
         addTop(header, tabs, 12);
-        String[] options = isWidgetConfiguration() || welcomePicker ? new String[]{"LO", "T"}
+        String[] options = isWidgetConfiguration() ? new String[]{"LO", "T"}
                 : previewPicking ? new String[]{"LO", "T", "teacher", "room"} : new String[]{"LO", "T", "teacher"};
         for (String option : options) {
             boolean selected = option.equals(kind);
@@ -1037,7 +1039,7 @@ public class MainActivity extends Activity {
         else if (welcomePicker) {
             LinearLayout footer = column();
             footer.setPadding(dp(20), dp(8), dp(20), dp(12));
-            welcomeConfirm = button("Zatwierdź wybór klasy", SELECTED, ACCENT);
+            welcomeConfirm = button("Zatwierdź wybór planu", SELECTED, ACCENT);
             welcomeConfirm.setEnabled(welcomeClass != null);
             welcomeConfirm.setAlpha(welcomeClass == null ? 0.5f : 1);
             welcomeConfirm.setOnClickListener(view -> { if (welcomeClass != null) select(welcomeClass); });
@@ -1319,6 +1321,39 @@ public class MainActivity extends Activity {
         if (dialog.getWindow() != null) {
             dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
             dialog.getWindow().setLayout(Math.min(dp(430), getResources().getDisplayMetrics().widthPixels - dp(32)), -2);
+            AppMotion.enter(panel);
+        }
+    }
+
+    void confirmDialog(String title, String badge, String detail, String confirm, String cancel, Runnable action) {
+        android.app.Dialog dialog = new android.app.Dialog(this);
+        LinearLayout panel = column();
+        panel.setBackground(surface(PANEL, 23));
+        panel.setPadding(dp(20), dp(18), dp(20), dp(18));
+        if (!badge.isEmpty()) {
+            TextView version = label(badge, 13, ACCENT, true);
+            version.setBackground(surface(SELECTED, 11));
+            version.setPadding(dp(10), dp(6), dp(10), dp(6));
+            panel.addView(version, new LinearLayout.LayoutParams(-2, -2));
+        }
+        addTop(panel, label(title, 22, INK, true), badge.isEmpty() ? 0 : 10);
+        addTop(panel, label(detail, 15, MUTED, false), 8);
+        LinearLayout buttons = row();
+        Button later = button(cancel, PANEL, INK);
+        later.setOnClickListener(view -> dialog.dismiss());
+        buttons.addView(later, new LinearLayout.LayoutParams(0, dp(48), 1));
+        Button accept = button(confirm, SELECTED, ACCENT);
+        accept.setOnClickListener(view -> { dialog.dismiss(); action.run(); });
+        LinearLayout.LayoutParams primary = new LinearLayout.LayoutParams(0, dp(48), 2);
+        primary.setMarginStart(dp(8));
+        buttons.addView(accept, primary);
+        addTop(panel, buttons, 18);
+        dialog.setContentView(panel);
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+            dialog.getWindow().setLayout(Math.min(dp(430), getResources().getDisplayMetrics().widthPixels - dp(32)), -2);
+            if (AppMotion.reduced(this)) dialog.getWindow().setWindowAnimations(0);
             AppMotion.enter(panel);
         }
     }
