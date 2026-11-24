@@ -1,0 +1,33 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <application android:label="@string/app_name" android:icon="@drawable/micekapp_launcher"
+        android:roundIcon="@drawable/micekapp_launcher"
+        android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".SectionActivity" android:exported="false" />
+        <activity android:name=".AverageActivity" android:exported="false" />
+        <activity android:name=".SubstitutionsActivity" android:exported="false" />
+        <activity android:name=".WidgetConfiguration" android:exported="true"
+            android:taskAffinity="pl.micekwidget.widgetsetup" android:excludeFromRecents="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" /></intent-filter>
+        </activity>
+        <receiver android:name=".PlanWidget" android:exported="false" android:label="@string/app_name">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/plan_widget" />
+        </receiver>
+        <receiver android:name=".NextLessonWidget" android:exported="false" android:label="Najbliższa lekcja">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/next_lesson_widget" />
+        </receiver>
+        <service android:name=".RefreshJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
+        <service android:name=".WidgetLessons" android:permission="android.permission.BIND_REMOTEVIEWS" android:exported="false" />
+    </application>
+</manifest>

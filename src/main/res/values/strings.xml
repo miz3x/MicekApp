@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">MicekApp</string>
+    <string name="widget_manual_add">Przytrzymaj puste miejsce na ekranie głównym, wybierz Widżety i dodaj %1$s.</string>
+</resources>

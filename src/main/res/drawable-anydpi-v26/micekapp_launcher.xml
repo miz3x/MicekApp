@@ -1,0 +1,7 @@
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@android:color/white" />
+    <foreground>
+        <!-- The visible mask spans 72dp of the 108dp adaptive icon layer. -->
+        <inset android:drawable="@drawable/micekapp_icon" android:inset="16.6667%" />
+    </foreground>
+</adaptive-icon>

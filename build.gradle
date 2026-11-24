@@ -1,0 +1,14 @@
+plugins { id 'com.android.application' version '8.7.3' }
+android {
+    namespace 'pl.micekwidget'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    defaultConfig {
+        applicationId 'pl.micekwidget'
+        minSdk 26
+        targetSdk 35
+        versionCode 16
+        versionName '1.15'
+    }
+}
+dependencies { implementation 'org.jsoup:jsoup:1.18.3' }

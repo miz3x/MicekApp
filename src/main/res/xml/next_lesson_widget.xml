@@ -1,0 +1,6 @@
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="95dp" android:minHeight="44dp" android:targetCellWidth="2" android:targetCellHeight="1"
+    android:minResizeWidth="95dp" android:minResizeHeight="44dp"
+    android:initialLayout="@layout/widget_next_tiny" android:updatePeriodMillis="0"
+    android:configure="pl.micekwidget.WidgetConfiguration" android:widgetFeatures="reconfigurable"
+    android:resizeMode="horizontal|vertical" android:widgetCategory="home_screen" />
