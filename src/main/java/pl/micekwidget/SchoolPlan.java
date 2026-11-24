@@ -22,7 +22,7 @@ final class SchoolPlan {
     }
 
     static List<ClassPlan> classes(String school) throws IOException {
-        Document page = Jsoup.connect(BASE + school + "/lista.html").timeout(12000).get();
+        Document page = Jsoup.connect(BASE + school + "/lista.html").followRedirects(false).timeout(12000).maxBodySize(500000).get();
         List<ClassPlan> result = new ArrayList<>();
         for (Element link : page.select("a[href]")) {
             String url = link.absUrl("href");
@@ -38,7 +38,10 @@ final class SchoolPlan {
     }
 
     static JSONArray fetch(String url) throws IOException {
-        Document page = Jsoup.connect(url).timeout(12000).get();
+        if (!url.matches("https://(?:www\\.)?mickiewicz\\.net\\.pl/planlekcji/aktualny/(?:LO|T)/plany/o[0-9]+\\.html")) {
+            throw new IOException("Nieprawidłowy adres planu");
+        }
+        Document page = Jsoup.connect(url).followRedirects(false).timeout(12000).maxBodySize(500000).get();
         JSONArray week = new JSONArray();
         for (int day = 0; day < DAYS.length; day++) {
             week.put(new JSONArray());

@@ -3,12 +3,20 @@ android {
     namespace 'pl.micekwidget'
     compileSdk 35
     buildToolsVersion '35.0.0'
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
     defaultConfig {
         applicationId 'pl.micekwidget'
         minSdk 26
         targetSdk 35
-        versionCode 16
-        versionName '1.15'
+        versionCode 18
+        versionName '1.17'
     }
 }
-dependencies { implementation 'org.jsoup:jsoup:1.18.3' }
+dependencies {
+    implementation 'org.jsoup:jsoup:1.24.1'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
+}

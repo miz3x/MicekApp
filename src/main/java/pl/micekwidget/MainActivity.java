@@ -44,6 +44,7 @@ public class MainActivity extends Activity {
     private boolean home = true;
     private boolean settings;
     private boolean firstStart = true;
+    private AppUpdates updates;
     private boolean previewPicking;
     private SchoolPlan.ClassPlan previewClass;
     private org.json.JSONArray previewWeek;
@@ -106,6 +107,7 @@ public class MainActivity extends Activity {
             if (!name.isEmpty() && !url.isEmpty()) widgetClass = new SchoolPlan.ClassPlan(name, url);
         } else {
             prefs = SchoolPlan.prefs(this);
+            if (!getIntent().getBooleanExtra("standalonePlan", false)) updates = new AppUpdates(this, executor);
             for (int id : PlanWidget.ids(this)) PlanWidget.settings(this, id);
         }
         String selection = widgetClass == null ? prefs.getString("url", "") : widgetClass.url;
@@ -144,6 +146,7 @@ public class MainActivity extends Activity {
         if (widgetPlan != null) widgetPlan.registerOnSharedPreferenceChangeListener(listener);
         if (!picking) renderScreen();
         if (firstStart && previewClass != null) loadPreview();
+        if (firstStart && updates != null) updates.check(false);
         clock.postDelayed(updateHome, 60000 - System.currentTimeMillis() % 60000);
         boolean classPlan = !prefs.getString("url", "").startsWith("teacher:");
         if (prefs.contains("url") && ((classPlan && !prefs.contains("changes"))
@@ -157,6 +160,11 @@ public class MainActivity extends Activity {
         if (prefs != null && !isWidgetConfiguration()) prefs.unregisterOnSharedPreferenceChangeListener(listener);
         if (widgetPlan != null) widgetPlan.unregisterOnSharedPreferenceChangeListener(listener);
         super.onStop();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (updates != null) updates.resumed();
     }
 
     @Override public void onSaveInstanceState(Bundle state) {
@@ -273,6 +281,10 @@ public class MainActivity extends Activity {
         return (previewClass == null ? visiblePlan().getString("url", "") : previewClass.url).startsWith("teacher:");
     }
 
+    private boolean visibleRoom() {
+        return previewClass != null && previewClass.url.startsWith("room:");
+    }
+
     private void clearPreview() {
         previewRequest++;
         previewClass = null;
@@ -301,10 +313,12 @@ public class MainActivity extends Activity {
             org.json.JSONArray week = null;
             org.json.JSONObject changes = null;
             boolean teacher = entry.url.startsWith("teacher:");
+            boolean room = entry.url.startsWith("room:");
             try {
-                String path = teacher ? "teacherId=" + entry.url.substring(8) : "classId=" + LivePlan.classId(entry.name);
+                String path = teacher ? "teacherId=" + entry.url.substring(8)
+                        : room ? "roomId=" + entry.url.substring(5) : "classId=" + LivePlan.classId(entry.name);
                 week = LivePlan.schedule(LivePlan.read("schedule?" + path));
-                if (!teacher) changes = LivePlan.changes(path.substring(8), weekStart);
+                if (!teacher && !room) changes = LivePlan.changes(path.substring(8), weekStart);
             } catch (IOException | JSONException ignored) {
                 if (week == null && entry.url.startsWith(SchoolPlan.BASE)) {
                     try { week = SchoolPlan.fetch(entry.url); } catch (IOException ignoredFallback) {}
@@ -315,7 +329,7 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed() || previewRequest != token) return;
                 previewFailed = result == null;
-                previewChangesFailed = !teacher && modifications == null;
+                previewChangesFailed = !teacher && !room && modifications == null;
                 if (result != null) {
                     previewWeek = result;
                     previewUpdated = System.currentTimeMillis();
@@ -482,7 +496,6 @@ public class MainActivity extends Activity {
                     if ("announcement".equals(LivePlan.text(event, "kind"))) found.put(event);
                 }
             } catch (IOException | JSONException ignored) {
-                // Keep previously loaded notices for this date.
             }
             org.json.JSONArray downloaded = found;
             runOnUiThread(() -> {
@@ -569,9 +582,18 @@ public class MainActivity extends Activity {
         picking = false;
         AppMotion.localBack(this, root, this::onBackPressed, true);
         root.removeAllViews();
+        LinearLayout toolbar = row();
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setPadding(dp(12), dp(6), dp(14), dp(8));
+        Button back = button("‹", PANEL, INK);
+        back.setContentDescription("Wróć");
+        back.setOnClickListener(view -> goHome());
+        toolbar.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        TextView title = label("Ustawienia", 25, INK, true);
+        title.setPadding(dp(10), 0, 0, 0);
+        toolbar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        root.addView(toolbar);
         content = scrollContent();
-        menuButton("Wróć do strony głównej", this::goHome);
-        addTop(content, label("Ustawienia", 30, INK, true), 16);
         int current = AppColors.appMode(this);
         addTop(content, label("Motyw aplikacji", 16, INK, true), 15);
         themeChoices(content, () -> AppColors.appMode(this), choice -> {
@@ -589,7 +611,7 @@ public class MainActivity extends Activity {
         addTop(content, glass, 4);
         String name = prefs.getString("name", "");
         if (!name.isEmpty()) addTop(content, label("Wybrany plan · " + name, 15, MUTED, false), 12);
-        menuButton("Zmień wybór klasy", () -> showPicker(school));
+        menuButton("Zmień wybór klasy", () -> showPicker(school.equals("room") ? "LO" : school));
         android.widget.Switch religion = new android.widget.Switch(this);
         religion.setText("Ukryj religię");
         religion.setTextColor(INK);
@@ -625,6 +647,7 @@ public class MainActivity extends Activity {
             AppMotion.localBack(this, root, this::onBackPressed, true);
         });
         menuButton("Dodaj widżet", this::pinWidget);
+        if (updates != null) menuButton("Sprawdź aktualizacje", () -> updates.check(true));
     }
 
     private void menuButton(String name, Runnable action) {
@@ -668,14 +691,15 @@ public class MainActivity extends Activity {
         boolean teacher = visibleTeacher();
         LinearLayout actions = row();
         addTop(header, actions, 6);
-        Button choose = button(name.isEmpty() ? "Wybierz klasę lub nauczyciela"
-                : (teacher ? name : shortName(name)) + "  ▾", SELECTED, ACCENT);
+        Button choose = button(name.isEmpty() ? "Wybierz plan"
+                : (visibleRoom() ? "Sala " + name : teacher ? name : shortName(name)) + "  ▾", SELECTED, ACCENT);
         actions.addView(choose, new LinearLayout.LayoutParams(0, dp(48), 1));
         choose.setOnClickListener(view -> {
             AppMotion.remember(this, root);
             previewPicking = true;
             String url = previewClass == null ? visiblePlan().getString("url", "") : previewClass.url;
-            showPicker(url.startsWith("teacher:") ? "teacher" : url.startsWith(SchoolPlan.BASE + "T/") ? "T" : "LO");
+            showPicker(url.startsWith("room:") ? "room" : url.startsWith("teacher:") ? "teacher"
+                    : url.startsWith(SchoolPlan.BASE + "T/") ? "T" : "LO");
         });
         Button refresh = button("↻", PANEL, ACCENT);
         refresh.setTextSize(23);
@@ -709,7 +733,7 @@ public class MainActivity extends Activity {
         content = scrollContent();
         if (previewClass != null) menuButton("Wróć do zapisanego planu", () -> { clearPreview(); renderPlan(); });
         if (name.isEmpty()) {
-            message(content, "Wybierz plan", "Wybierz klasę lub nauczyciela, aby zobaczyć lekcje.");
+            message(content, "Wybierz plan", "Wybierz klasę, nauczyciela lub salę, aby zobaczyć lekcje.");
         } else {
             renderLessons();
         }
@@ -733,7 +757,8 @@ public class MainActivity extends Activity {
         boolean failed = previewClass == null ? prefs.getBoolean("error", false) : previewFailed;
         if (failed) addTop(content, label("Nie udało się odświeżyć planu.", 14, ALERT, false), 8);
         LocalDate date = planWeek.plusDays(day);
-        List<LivePlan.Lesson> lessons = previewClass == null ? LivePlan.day(this, prefs, date)
+        List<LivePlan.Lesson> lessons = visibleRoom() ? LivePlan.merge(previewWeek == null ? null : previewWeek.optJSONArray(day), null)
+                : previewClass == null ? LivePlan.day(this, prefs, date)
                 : LivePlan.day(this, previewWeek, previewChanges, date, !visibleTeacher());
         long changes = lessons.stream().filter(lesson -> !lesson.status.isEmpty()).count();
         if (previewClass == null ? prefs.getBoolean("changesError", false) : previewChangesFailed) {
@@ -760,7 +785,7 @@ public class MainActivity extends Activity {
         String time = lesson.period > 0 ? lesson.period + ".  ·  " + lesson.time() : lesson.time();
         if (active) time = "Teraz  ·  " + time;
         top.addView(label(time, 13, accent, true), new LinearLayout.LayoutParams(0, -2, 1));
-        if (!lesson.room.isEmpty() && !lesson.cancelled) {
+        if (!visibleRoom() && !lesson.room.isEmpty() && !lesson.cancelled) {
             TextView room = label("Sala " + lesson.room, 13, INK, true);
             room.setBackground(surface(BG, 8));
             room.setPadding(dp(9), dp(4), dp(9), dp(4));
@@ -772,7 +797,8 @@ public class MainActivity extends Activity {
         if (lesson.cancelled) title.setPaintFlags(title.getPaintFlags() | android.graphics.Paint.STRIKE_THRU_TEXT_FLAG);
         addTop(card, title, 4);
         boolean teacherPlan = visibleTeacher();
-        String detail = teacherPlan ? lesson.className : lesson.cancelled ? "" : lesson.teacher;
+        String detail = teacherPlan || visibleRoom() ? lesson.className : lesson.cancelled ? "" : lesson.teacher;
+        if (visibleRoom() && !lesson.teacher.isEmpty()) detail += (detail.isEmpty() ? "" : "  ·  ") + lesson.teacher;
         if (!lesson.group.isEmpty()) detail += (detail.isEmpty() ? "" : "  ·  ") + lesson.group;
         if (lesson.optional) detail += (detail.isEmpty() ? "" : "  ·  ") + "nieobowiązkowa";
         if (!detail.isEmpty()) addTop(card, label(detail, 13, MUTED, false), 4);
@@ -796,16 +822,20 @@ public class MainActivity extends Activity {
             header.addView(back);
             back.setOnClickListener(view -> renderScreen());
         }
-        String title = isWidgetConfiguration() ? "Ustawienia widżetu" : kind.equals("teacher") ? "Nauczyciele" : "Wybierz klasę";
+        String title = isWidgetConfiguration() ? "Ustawienia widżetu" : kind.equals("room") ? "Wybierz salę"
+                : kind.equals("teacher") ? "Nauczyciele" : "Wybierz klasę";
         addTop(header, label(title, 27, INK, true), isWidgetConfiguration() ? 0 : 14);
         if (isWidgetConfiguration()) addWidgetThemes(header);
         LinearLayout tabs = row();
         addTop(header, tabs, 12);
-        String[] options = isWidgetConfiguration() ? new String[]{"LO", "T"} : new String[]{"LO", "T", "teacher"};
+        String[] options = isWidgetConfiguration() ? new String[]{"LO", "T"}
+                : previewPicking ? new String[]{"LO", "T", "teacher", "room"} : new String[]{"LO", "T", "teacher"};
         for (String option : options) {
             boolean selected = option.equals(kind);
-            Button tab = button(option.equals("LO") ? "Liceum" : option.equals("T") ? "Technikum" : "Nauczyciele",
+            Button tab = button(option.equals("LO") ? "Liceum" : option.equals("T") ? "Technikum"
+                            : option.equals("room") ? "Sale" : options.length == 4 ? "Nauczyciel" : "Nauczyciele",
                     selected ? SELECTED : PANEL, selected ? ACCENT : MUTED);
+            if (options.length == 4) { tab.setPadding(dp(2), 0, dp(2), 0); tab.setTextSize(12); }
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, dp(48), 1);
             if (!option.equals("LO")) size.setMarginStart(dp(6));
             tabs.addView(tab, size);
@@ -818,7 +848,7 @@ public class MainActivity extends Activity {
         search.setTextSize(16);
         search.setTextColor(INK);
         search.setHintTextColor(MUTED);
-        search.setHint(kind.equals("teacher") ? "Szukaj nauczyciela" : "Szukaj klasy lub profilu");
+        search.setHint(kind.equals("room") ? "Szukaj sali" : kind.equals("teacher") ? "Szukaj nauczyciela" : "Szukaj klasy lub profilu");
         search.setBackground(surface(PANEL, 13));
         search.setPadding(dp(14), dp(12), dp(14), dp(12));
         addTop(header, search, 10);
@@ -826,7 +856,8 @@ public class MainActivity extends Activity {
         header.requestFocus();
 
         LinearLayout results = scrollContent();
-        results.addView(label(kind.equals("teacher") ? "Pobieranie listy nauczycieli…" : "Pobieranie listy klas…", 15, MUTED, false));
+        results.addView(label(kind.equals("room") ? "Pobieranie sal…"
+                : kind.equals("teacher") ? "Pobieranie listy nauczycieli…" : "Pobieranie listy klas…", 15, MUTED, false));
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
@@ -844,9 +875,9 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             List<SchoolPlan.ClassPlan> loaded = null;
             try {
-                loaded = kind.equals("teacher") ? LivePlan.teachers() : SchoolPlan.classes(kind);
+                loaded = kind.equals("room") ? LivePlan.rooms()
+                        : kind.equals("teacher") ? LivePlan.teachers() : SchoolPlan.classes(kind);
             } catch (IOException | JSONException ignored) {
-                // Show a retry action when the school list is unavailable.
             }
             List<SchoolPlan.ClassPlan> downloaded = loaded;
             runOnUiThread(() -> {
@@ -858,7 +889,8 @@ public class MainActivity extends Activity {
                     renderClasses(results, search.getText().toString());
                 } else {
                     results.removeAllViews();
-                    results.addView(label(kind.equals("teacher") ? "Nie udało się pobrać nauczycieli."
+                    results.addView(label(kind.equals("room") ? "Nie udało się pobrać sal."
+                            : kind.equals("teacher") ? "Nie udało się pobrać nauczycieli."
                             : "Nie udało się pobrać listy klas.", 16, ALERT, false));
                     Button retry = button("Spróbuj ponownie", PANEL, ACCENT);
                     addTop(results, retry, 10);
@@ -977,7 +1009,7 @@ public class MainActivity extends Activity {
                 else select(entry);
             });
         }
-        if (results.getChildCount() == 0) results.addView(label(school.equals("teacher")
+        if (results.getChildCount() == 0) results.addView(label(school.equals("room") ? "Brak pasujących sal." : school.equals("teacher")
                 ? "Brak pasujących nauczycieli." : "Brak pasujących klas.", 16, MUTED, false));
     }
 

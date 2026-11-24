@@ -16,7 +16,7 @@ final class LivePlan {
     private static final String API = "https://micekapp.pl/api/";
 
     static JSONObject read(String path) throws IOException, JSONException {
-        String body = Jsoup.connect(API + path).ignoreContentType(true).timeout(6500).maxBodySize(1500000)
+        String body = Jsoup.connect(API + path).ignoreContentType(true).followRedirects(false).timeout(6500).maxBodySize(1500000)
                 .header("Accept", "application/json").execute().body();
         return new JSONObject(body);
     }
@@ -41,19 +41,27 @@ final class LivePlan {
     }
 
     static List<SchoolPlan.ClassPlan> teachers() throws IOException, JSONException {
+        return catalog(false);
+    }
+
+    static List<SchoolPlan.ClassPlan> rooms() throws IOException, JSONException {
+        return catalog(true);
+    }
+
+    private static List<SchoolPlan.ClassPlan> catalog(boolean rooms) throws IOException, JSONException {
         List<SchoolPlan.ClassPlan> result = new ArrayList<>();
         int pages = 1;
         for (int page = 1; page <= pages; page++) {
-            JSONObject response = read("catalog/teachers?limit=100&page=" + page);
+            JSONObject response = read("catalog/" + (rooms ? "rooms" : "teachers") + "?limit=100&page=" + page);
             JSONObject meta = response.optJSONObject("meta");
             if (meta != null) pages = Math.min(meta.optInt("totalPages", 1), 20);
-            JSONArray teachers = response.getJSONArray("data");
-            for (int i = 0; i < teachers.length(); i++) {
-                JSONObject teacher = teachers.getJSONObject(i);
-                String name = (text(teacher, "firstName") + " " + text(teacher, "lastName")).trim();
-                String id = text(teacher, "id");
+            JSONArray items = response.getJSONArray("data");
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.getJSONObject(i);
+                String name = rooms ? text(item, "name") : (text(item, "firstName") + " " + text(item, "lastName")).trim();
+                String id = text(item, "id");
                 if (!name.isEmpty() && id.matches("[0-9a-fA-F-]{36}")) {
-                    result.add(new SchoolPlan.ClassPlan(name, "teacher:" + id));
+                    result.add(new SchoolPlan.ClassPlan(name, (rooms ? "room:" : "teacher:") + id));
                 }
             }
         }

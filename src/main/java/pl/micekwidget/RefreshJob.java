@@ -92,7 +92,6 @@ public final class RefreshJob extends JobService {
             try {
                 result.week = LivePlan.schedule(LivePlan.read("schedule?teacherId=" + target.url.substring(8)));
             } catch (IOException | JSONException ignored) {
-                // Preserve the last downloaded teacher timetable.
             }
             return result;
         }
@@ -100,25 +99,21 @@ public final class RefreshJob extends JobService {
         try {
             if (result.classId.isEmpty()) result.classId = LivePlan.classId(target.name);
         } catch (IOException | JSONException ignored) {
-            // The school's timetable is still available as a fallback.
         }
         if (!result.classId.isEmpty()) {
             try {
                 result.week = LivePlan.schedule(LivePlan.read("schedule?classId=" + result.classId));
             } catch (IOException | JSONException ignored) {
-                // Preserve the last structured plan when possible.
             }
             try {
                 result.changes = LivePlan.changes(result.classId, monday);
             } catch (IOException | JSONException ignored) {
-                // Preserve cached changes and flag failed refresh.
             }
         }
         if (result.week == null && target.url.startsWith(SchoolPlan.BASE)) {
             try {
                 result.fallback = SchoolPlan.fetch(target.url);
             } catch (IOException ignored) {
-                // No fallback timetable is available.
             }
         }
         return result;
