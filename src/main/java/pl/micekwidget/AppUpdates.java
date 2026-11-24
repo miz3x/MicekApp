@@ -64,7 +64,7 @@ final class AppUpdates {
                             .setMessage("Pobrać i zainstalować nową wersję MicekApp z GitHuba?")
                             .setNegativeButton("Później", null)
                             .setPositiveButton("Pobierz", (dialog, which) -> prepare(release)).show();
-                } else if (manual) show(failure == null ? "Brak nowszego APK w GitHub Releases." : failure);
+                } else if (manual) show(failure == null ? "Masz najnowszą wersję" : failure);
             });
         });
     }
@@ -163,6 +163,7 @@ final class AppUpdates {
         if (data.optBoolean("draft") || data.optBoolean("prerelease") || compare(tag, current) <= 0) return null;
         JSONArray assets = data.optJSONArray("assets");
         if (assets == null) return null;
+        Release legacy = null;
         for (int i = 0; i < assets.length(); i++) {
             JSONObject asset = assets.optJSONObject(i);
             if (asset == null) continue;
@@ -171,10 +172,12 @@ final class AppUpdates {
             long size = asset.optLong("size", 0);
             if (name.matches("(?i)MicekApp[-_A-Za-z0-9.]*\\.apk") && url.equals(REPO + tag + "/" + name)
                     && size > 0 && size <= MAX_APK) {
-                return new Release(tag, url, size, LivePlan.text(asset, "digest"));
+                Release release = new Release(tag, url, size, LivePlan.text(asset, "digest"));
+                if ("MicekApp.apk".equals(name)) return release;
+                if (legacy == null) legacy = release;
             }
         }
-        return null;
+        return legacy;
     }
 
     static int compare(String next, String installed) {

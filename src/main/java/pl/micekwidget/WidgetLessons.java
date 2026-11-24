@@ -41,7 +41,9 @@ public final class WidgetLessons extends RemoteViewsService {
                 List<LivePlan.Lesson> current = lessons;
                 if (position < 0 || position >= current.size()) return null;
                 LivePlan.Lesson lesson = current.get(position);
-                return row(WidgetLessons.this, lesson, colors, PlanDay.active(lesson, date, ZonedDateTime.now(SchoolPlan.ZONE)));
+                ZonedDateTime now = ZonedDateTime.now(SchoolPlan.ZONE);
+                return row(WidgetLessons.this, lesson, colors, PlanDay.active(lesson, date, now),
+                        PlanDay.upcomingIndex(current, date, now) == position);
             }
 
             @Override public RemoteViews getLoadingView() { return null; }
@@ -51,9 +53,10 @@ public final class WidgetLessons extends RemoteViewsService {
         };
     }
 
-    static RemoteViews row(android.content.Context context, LivePlan.Lesson lesson, AppColors colors, boolean active) {
+    static RemoteViews row(android.content.Context context, LivePlan.Lesson lesson, AppColors colors,
+                           boolean active, boolean upcoming) {
         RemoteViews row = new RemoteViews(context.getPackageName(), R.layout.widget_lesson);
-        row.setViewVisibility(R.id.lesson_highlight, active ? View.VISIBLE : View.GONE);
+        row.setViewVisibility(R.id.lesson_highlight, active || upcoming ? View.VISIBLE : View.GONE);
         row.setImageViewResource(R.id.lesson_highlight, colors.light ? R.drawable.widget_active_light : R.drawable.widget_active_dark);
         row.setOnClickFillInIntent(R.id.lesson_row, new Intent());
         boolean changed = !lesson.status.isEmpty();
@@ -67,6 +70,7 @@ public final class WidgetLessons extends RemoteViewsService {
         row.setTextColor(R.id.lesson_name, accent);
         String detail = lesson.cancelled ? lesson.group : changed ? lesson.status : lesson.teacher;
         if (active) detail = "Teraz" + (detail.isEmpty() ? "" : " · " + detail);
+        if (upcoming) detail = "Następna" + (detail.isEmpty() ? "" : " · " + detail);
         if (changed && !lesson.cancelled && !lesson.teacher.isEmpty()) detail += " · " + lesson.teacher;
         if (!lesson.cancelled && !lesson.group.isEmpty()) {
             detail += (detail.isEmpty() ? "" : " · ") + lesson.group;

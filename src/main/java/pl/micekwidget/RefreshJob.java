@@ -30,9 +30,11 @@ public final class RefreshJob extends JobService {
 
     static void schedule(Context context) {
         JobScheduler scheduler = context.getSystemService(JobScheduler.class);
-        if (scheduler.getPendingJob(PERIODIC) == null) {
+        long interval = SchoolPlan.prefs(context).getInt("refreshMinutes", 15) * 60000L;
+        JobInfo pending = scheduler.getPendingJob(PERIODIC);
+        if (pending == null || pending.getIntervalMillis() != interval) {
             scheduler.schedule(builder(context, PERIODIC).setPersisted(true)
-                    .setPeriodic(15 * 60 * 1000L).build());
+                    .setPeriodic(interval).build());
         }
     }
 
@@ -46,10 +48,6 @@ public final class RefreshJob extends JobService {
         return scheduler.schedule(builder(context, IMMEDIATE).build()) == JobScheduler.RESULT_SUCCESS;
     }
 
-    static void cancelPeriodic(Context context) {
-        context.getSystemService(JobScheduler.class).cancel(PERIODIC);
-    }
-
     private static JobInfo.Builder builder(Context context, int id) {
         return new JobInfo.Builder(id, new ComponentName(context, RefreshJob.class))
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY);
@@ -58,7 +56,8 @@ public final class RefreshJob extends JobService {
     @Override public boolean onStartJob(JobParameters params) {
         active.add(params);
         List<SharedPreferences> selections = new ArrayList<>();
-        selections.add(SchoolPlan.prefs(this));
+        SharedPreferences app = SchoolPlan.prefs(this);
+        selections.add(app);
         for (int id : PlanWidget.ids(this)) selections.add(PlanWidget.settings(this, id));
         List<Target> targets = new ArrayList<>();
         for (SharedPreferences prefs : selections) {
@@ -72,11 +71,18 @@ public final class RefreshJob extends JobService {
             LocalDate monday = today.minusDays(today.getDayOfWeek().getValue() - 1);
             for (Target target : targets) {
                 if (Thread.currentThread().isInterrupted()) break;
-                Snapshot snapshot = fetched.computeIfAbsent(target.url, key -> fetch(target, monday));
+                Snapshot snapshot = fetched.computeIfAbsent(target.url, key -> fetch(target, monday,
+                        SchoolNotifications.allowed(this) && SchoolNotifications.enabled(this, SchoolNotifications.PLAN)));
                 handler.post(() -> {
-                    if (active.contains(params)) target.save(snapshot);
+                    if (!active.contains(params)) return;
+                    if (target.prefs == app && snapshot.changes != null && target.url.equals(app.getString("url", ""))) {
+                        SchoolNotifications.plan(this, target.name, app.getString(target.teacher ? "teacherAlerts" : "changes", ""),
+                                snapshot.changes, target.teacher);
+                    }
+                    target.save(snapshot);
                 });
             }
+            SchoolNotifications.poll(this);
             handler.post(() -> {
                 if (!active.remove(params)) return;
                 PlanWidget.render(this);
@@ -86,12 +92,16 @@ public final class RefreshJob extends JobService {
         return true;
     }
 
-    private static Snapshot fetch(Target target, LocalDate monday) {
+    private static Snapshot fetch(Target target, LocalDate monday, boolean planNotifications) {
         Snapshot result = new Snapshot();
         if (target.teacher) {
             try {
                 result.week = LivePlan.schedule(LivePlan.read("schedule?teacherId=" + target.url.substring(8)));
             } catch (IOException | JSONException ignored) {
+            }
+            if (planNotifications) {
+                try { result.changes = LivePlan.changes(target.url.substring(8), monday, true); }
+                catch (IOException | JSONException ignored) {}
             }
             return result;
         }
@@ -163,7 +173,7 @@ public final class RefreshJob extends JobService {
                 } else {
                     edit.putBoolean("changesError", true);
                 }
-            }
+            } else if (snapshot.changes != null) edit.putString("teacherAlerts", snapshot.changes.toString());
             JSONArray week = snapshot.week;
             if (week == null && !prefs.contains("week")) week = snapshot.fallback;
             if (week != null) {

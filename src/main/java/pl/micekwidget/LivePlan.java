@@ -99,19 +99,27 @@ final class LivePlan {
     }
 
     static JSONObject changes(String id, LocalDate monday) throws IOException, JSONException {
+        return changes(id, monday, false);
+    }
+
+    static JSONObject changes(String id, LocalDate monday, boolean teacher) throws IOException, JSONException {
         JSONObject result = new JSONObject();
         JSONArray dates = read("substitutions/dates").getJSONArray("dates");
         for (int i = 0; i < dates.length(); i++) {
             String date = dates.getJSONObject(i).getString("date");
             if (date.compareTo(monday.toString()) < 0 || date.compareTo(monday.plusDays(7).toString()) > 0) continue;
             if (!date.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}")) continue;
-            JSONArray events = read("substitutions?date=" + date + "&classId=" + id).getJSONArray("events");
+            JSONArray events = read("substitutions?date=" + date + (teacher ? "&teacherId=" : "&classId=") + id)
+                    .getJSONArray("events");
             for (int j = 0; j < events.length(); j++) {
                 JSONObject event = events.getJSONObject(j);
                 String kind = text(event, "kind");
-                if (!id.equals(text(event.optJSONObject("class"), "id"))
-                        || kind.equals("duty") || kind.equals("announcement") || event.optInt("period") <= 0) continue;
+                boolean matches = teacher ? id.equals(text(event.optJSONObject("absentTeacher"), "id"))
+                        || id.equals(text(event.optJSONObject("substitute"), "id"))
+                        : id.equals(text(event.optJSONObject("class"), "id"));
+                if (!matches || kind.equals("duty") || kind.equals("announcement") || event.optInt("period") <= 0) continue;
                 addChange(result, date, event);
+                if (teacher) continue;
                 JSONObject moved = event.optJSONObject("moved");
                 JSONObject from = moved == null ? null : moved.optJSONObject("from");
                 if (from == null || from.optInt("period") <= 0) continue;
@@ -139,8 +147,9 @@ final class LivePlan {
     static List<Lesson> day(Context context, SharedPreferences prefs, LocalDate date) {
         try {
             JSONArray week = new JSONArray(prefs.getString("week", "[]"));
-            JSONObject changes = new JSONObject(prefs.getString("changes", "{}"));
-            return day(context, week, changes, date, !prefs.getString("url", "").startsWith("teacher:"));
+            boolean classPlan = !prefs.getString("url", "").startsWith("teacher:");
+            JSONObject changes = new JSONObject(prefs.getString(classPlan ? "changes" : "teacherAlerts", "{}"));
+            return day(context, week, changes, date, classPlan);
         } catch (JSONException ignored) {
             return new ArrayList<>();
         }
@@ -155,18 +164,16 @@ final class LivePlan {
         }
         if (classPlan) {
             int language = settings.getInt("languageChoice", 0);
-            if (language != 0) lessons.removeIf(lesson -> !languageAllowed(lesson, language));
+            lessons.removeIf(lesson -> !languageAllowed(lesson, language));
         }
         return lessons;
     }
 
     static boolean languageAllowed(Lesson lesson, int choice) {
-        if (choice == 0) return true;
         String subject = lesson.previous.isEmpty() ? lesson.title + " " + lesson.shortTitle : lesson.previous;
         String normalized = subject.toLowerCase(java.util.Locale.ROOT);
-        if (choice == 1) return !normalized.contains("niemieck");
-        if (choice == 2) return !normalized.contains("rosyjsk");
-        return true;
+        return (!normalized.contains("niemieck") || choice == 1)
+                && (!normalized.contains("rosyjsk") || choice == 2);
     }
 
     static boolean isReligion(String title) {

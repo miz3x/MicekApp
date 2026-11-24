@@ -34,6 +34,8 @@ public final class SectionActivity extends NativePage {
             default: finish(); return;
         }
         api = new CommunityApi(this);
+        String openedPost = getIntent().getStringExtra("post");
+        if (section.equals("spotted") && openedPost != null && openedPost.matches("[0-9a-fA-F-]{36}")) post = openedPost;
         if (section.equals("radio")) covers = new CoverImages(AppMotion.reduced(this));
         dutyDay = PlanDay.display().getDayOfWeek().getValue() - 1;
         if (LocalDate.now(SchoolPlan.ZONE).toString().equals(SchoolPlan.prefs(this).getString("voteDate", ""))) {
@@ -145,6 +147,16 @@ public final class SectionActivity extends NativePage {
             if (item == null) { failure(list, this::render); return; }
             LinearLayout entry = card(list, 6);
             postText(entry, item, Integer.MAX_VALUE);
+            String opened = post;
+            boolean followed = SchoolNotifications.follows(this, opened);
+            android.widget.Button follow = button(followed ? "Przestań obserwować" : "Obserwuj post", followed, () -> {});
+            follow.setOnClickListener(view -> {
+                boolean selected = !SchoolNotifications.follows(this, opened);
+                SchoolNotifications.follow(this, opened, data.optJSONArray("comments"), selected);
+                follow.setText(selected ? "Przestań obserwować" : "Obserwuj post");
+                RefreshJob.schedule(this);
+            });
+            add(entry, follow, 8);
             if (!"archived".equals(value(item, "status")) && item.isNull("archivedAt")) {
                 add(entry, button((item.optBoolean("liked") ? "♥ " : "♡ ") + item.optInt("likesCount") + " · Polubienia",
                         item.optBoolean("liked"), () -> send(() -> { api.post(route + "/like", new JSONObject()); return null; }, "")), 9);
@@ -341,48 +353,79 @@ public final class SectionActivity extends NativePage {
     }
 
     private void grades() {
-        EditText maximum = numeric("Maksymalna liczba punktów");
-        EditText scored = numeric("Zdobyte punkty");
+        LinearLayout form = card(body, 8);
+        add(form, label("Typ przedmiotu", 16, colors.text, true), 0);
         String[] types = {"Ogólne", "Zawodowe teoretyczne", "Zawodowe praktyczne"};
-        android.content.Context themed = new android.view.ContextThemeWrapper(this, colors.light
-                ? android.R.style.Theme_Material_Light : android.R.style.Theme_Material);
-        android.widget.Spinner spinner = new android.widget.Spinner(themed);
-        android.widget.ArrayAdapter<String> typesAdapter = new android.widget.ArrayAdapter<>(themed,
-                android.R.layout.simple_spinner_item, types);
-        typesAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinner.setAdapter(typesAdapter);
-        add(body, spinner, 7);
-        add(body, maximum, 8);
-        add(body, scored, 8);
+        android.widget.Button choice = button(types[gradeType] + "  ▾", true, () -> {});
+        EditText maximum = numeric("np. 45");
+        EditText scored = numeric("np. 31");
         LinearLayout rows = column();
-        add(body, rows, 10);
         Runnable update = () -> {
+            choice.setText(types[gradeType] + "  ▾");
             rows.removeAllViews();
             double max = number(maximum), obtained = number(scored);
             int[] thresholds = THRESHOLDS[gradeType];
             if (max > 0 && obtained >= 0 && obtained <= max) {
                 int grade = 0;
                 while (grade < 5 && obtained < threshold(max, thresholds[grade])) grade++;
-                add(card(rows, 6), label("Ocena " + (6 - grade) + " · " + GRADES[grade], 18, colors.accent, true), 0);
+                LinearLayout result = card(rows, 6);
+                result.setBackground(shape(colors.selected, 16));
+                add(result, label("Twoja ocena · " + (6 - grade) + " " + GRADES[grade], 19, colors.accent, true), 0);
+            } else if (max > 0 && obtained > max) {
+                add(rows, label("Zdobyte punkty przekraczają maksimum.", 14, colors.warning, true), 8);
             }
+            add(rows, label("Wymagane punkty", 18, colors.text, true), 12);
+            java.text.NumberFormat number = java.text.NumberFormat.getInstance(new java.util.Locale("pl", "PL"));
             for (int i = 0; i < thresholds.length; i++) {
-                String condition = max > 0 ? " · od " + java.text.NumberFormat.getInstance(new java.util.Locale("pl", "PL"))
-                        .format(threshold(max, thresholds[i])) + " pkt" : "";
-                add(card(rows, 7), label((6 - i) + "  " + GRADES[i] + " · " + thresholds[i] + "%" + condition,
-                        14, colors.text, true), 0);
+                LinearLayout line = new LinearLayout(this);
+                line.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                line.addView(label(Integer.toString(6 - i), 22, colors.accent, true),
+                        new LinearLayout.LayoutParams(dp(31), -2));
+                LinearLayout description = column();
+                add(description, label(GRADES[i], 15, colors.text, true), 0);
+                add(description, label("Od " + thresholds[i] + "%", 12, colors.muted, false), 3);
+                line.addView(description, new LinearLayout.LayoutParams(0, -2, 1));
+                line.addView(label(max > 0 ? number.format(threshold(max, thresholds[i])) + " pkt" : "— pkt",
+                        14, colors.muted, true));
+                add(card(rows, 7), line, 0);
             }
         };
-        spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(android.widget.AdapterView<?> parent, android.view.View view, int position, long id) {
-                gradeType = position; update.run();
-            }
-            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        choice.setContentDescription("Typ przedmiotu · " + types[gradeType]);
+        choice.setOnClickListener(view -> {
+            android.widget.ListPopupWindow dropdown = new android.widget.ListPopupWindow(this);
+            dropdown.setAnchorView(choice);
+            dropdown.setWidth(choice.getWidth());
+            dropdown.setModal(true);
+            dropdown.setBackgroundDrawable(shape(colors.panel, 13));
+            dropdown.setAdapter(new android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, types) {
+                @Override public android.view.View getView(int position, android.view.View recycled, android.view.ViewGroup parent) {
+                    android.widget.TextView option = label(types[position], 15,
+                            position == gradeType ? colors.accent : colors.text, position == gradeType);
+                    option.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                    option.setMinHeight(dp(48));
+                    option.setPadding(dp(14), 0, dp(14), 0);
+                    if (position == gradeType) option.setBackground(shape(colors.selected, 11));
+                    return option;
+                }
+            });
+            dropdown.setOnItemClickListener((parent, item, position, id) -> {
+                gradeType = position;
+                choice.setContentDescription("Typ przedmiotu · " + types[position]);
+                dropdown.dismiss();
+                update.run();
+            });
+            dropdown.show();
         });
+        add(form, choice, 6);
+        add(form, label("Maksymalna liczba punktów", 14, colors.text, true), 13);
+        add(form, maximum, 5);
+        add(form, label("Zdobyte punkty", 14, colors.text, true), 10);
+        add(form, scored, 5);
+        add(body, rows, 10);
         maximum.addTextChangedListener(onText(update));
         scored.addTextChangedListener(onText(update));
         update.run();
     }
-
     static double threshold(double max, int percentage) {
         return percentage == 100 ? max : Math.ceil(max * percentage / 50.0) / 2;
     }

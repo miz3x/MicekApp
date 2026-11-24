@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application android:label="@string/app_name" android:icon="@drawable/micekapp_launcher"
         android:roundIcon="@drawable/micekapp_launcher"
         android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="false"
@@ -14,12 +15,11 @@
             </intent-filter>
         </activity>
         <activity android:name=".SectionActivity" android:exported="false" />
-        <activity android:name=".AverageActivity" android:exported="false" />
         <activity android:name=".SubstitutionsActivity" android:exported="false" />
-        <provider android:name=".UpdateApkProvider" android:authorities="pl.micekwidget.updates"
+        <provider android:name=".UpdateApkProvider" android:authorities="${applicationId}.updates"
             android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".WidgetConfiguration" android:exported="true"
-            android:taskAffinity="pl.micekwidget.widgetsetup" android:excludeFromRecents="true">
+            android:taskAffinity="${applicationId}.widgetsetup" android:excludeFromRecents="true">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" /></intent-filter>
         </activity>
         <receiver android:name=".PlanWidget" android:exported="false" android:label="@string/app_name">

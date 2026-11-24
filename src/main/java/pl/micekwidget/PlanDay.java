@@ -38,6 +38,23 @@ final class PlanDay {
         return now.getHour() * 60 + now.getMinute();
     }
 
+    static int upcomingIndex(java.util.List<LivePlan.Lesson> lessons, LocalDate date, ZonedDateTime now) {
+        if (!date.equals(now.toLocalDate())) return -1;
+        int index = -1;
+        int nearest = Integer.MAX_VALUE;
+        for (int i = 0; i < lessons.size(); i++) {
+            LivePlan.Lesson lesson = lessons.get(i);
+            if (active(lesson, date, now)) return -1;
+            if (lesson.cancelled) continue;
+            int start = minute(lesson.start);
+            if (start > minute(now) && start < nearest) {
+                index = i;
+                nearest = start;
+            }
+        }
+        return index;
+    }
+
     static int minute(String time) {
         String[] parts = time.split(":");
         if (parts.length != 2) return -1;

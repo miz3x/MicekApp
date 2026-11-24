@@ -24,7 +24,7 @@ public final class NextLessonWidget extends PlanWidget {
         RemoteViews views = new RemoteViews(context.getPackageName(), tiny ? R.layout.widget_next_tiny : R.layout.widget_next_lesson);
         style(views, colors, prefs);
         int mode = themeMode(prefs);
-        boolean glass = colors.light ? prefs.getBoolean("glassLight", false) : prefs.getBoolean("glassDark", false);
+        boolean glass = GlassSettings.read(prefs, "glass", mode).enabled;
         boolean blue = mode != AppColors.AMOLED && !glass;
         if (blue) views.setImageViewResource(R.id.widget_background, colors.light
                 ? R.drawable.widget_focus_light : R.drawable.widget_focus_dark);

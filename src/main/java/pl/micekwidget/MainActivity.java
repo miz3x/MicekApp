@@ -45,6 +45,10 @@ public class MainActivity extends Activity {
     private boolean settings;
     private boolean firstStart = true;
     private AppUpdates updates;
+    private int welcomeStep;
+    private boolean welcomePicker;
+    private SchoolPlan.ClassPlan welcomeClass;
+    private Button welcomeConfirm;
     private boolean previewPicking;
     private SchoolPlan.ClassPlan previewClass;
     private org.json.JSONArray previewWeek;
@@ -57,13 +61,15 @@ public class MainActivity extends Activity {
     private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable updateHome = new Runnable() {
         @Override public void run() {
-            if (home && !picking && !settings) renderHome();
+            if (welcomeStep == 0 && home && !picking && !settings) renderHome();
             clock.postDelayed(this, 60000 - System.currentTimeMillis() % 60000);
         }
     };
     private int widgetId = AppWidgetManager.INVALID_APPWIDGET_ID;
     private int widgetTheme;
-    private boolean glassDark, glassLight;
+    private boolean widgetGlass;
+    private int widgetGlassOpacity = 100;
+    private boolean widgetGlassEdge;
     private SchoolPlan.ClassPlan widgetClass;
     private Button widgetSave;
     private PullRefresh pull;
@@ -82,8 +88,6 @@ public class MainActivity extends Activity {
             finishRefresh();
         }
         if (!picking) renderScreen();
-        if (firstStart && getIntent().getBooleanExtra("standalonePlan", false)) animateContent();
-        firstStart = false;
     };
 
     @Override public void onCreate(Bundle state) {
@@ -100,14 +104,21 @@ public class MainActivity extends Activity {
             prefs = PlanWidget.settings(this, widgetId);
             widgetTheme = state == null ? PlanWidget.themeMode(prefs)
                     : state.getInt("widgetTheme", PlanWidget.themeMode(prefs));
-            glassDark = state == null ? prefs.getBoolean("glassDark", false) : state.getBoolean("glassDark", false);
-            glassLight = state == null ? prefs.getBoolean("glassLight", false) : state.getBoolean("glassLight", false);
+            GlassSettings effect = GlassSettings.read(prefs, "glass", widgetTheme);
+            widgetGlass = state == null ? effect.enabled : state.getBoolean("widgetGlass", effect.enabled);
+            widgetGlassOpacity = state == null ? effect.opacity : state.getInt("widgetGlassOpacity", effect.opacity);
+            widgetGlassEdge = state == null ? effect.edge : state.getBoolean("widgetGlassEdge", effect.edge);
             String name = state == null ? prefs.getString("name", "") : state.getString("widgetClassName", "");
             String url = state == null ? prefs.getString("url", "") : state.getString("widgetClassUrl", "");
             if (!name.isEmpty() && !url.isEmpty()) widgetClass = new SchoolPlan.ClassPlan(name, url);
         } else {
             prefs = SchoolPlan.prefs(this);
             if (!getIntent().getBooleanExtra("standalonePlan", false)) updates = new AppUpdates(this, executor);
+            if (updates != null && !PlanWidget.OPEN_PLAN.equals(getIntent().getAction())
+                    && !OPEN_DAY.equals(getIntent().getAction())) {
+                welcomeStep = prefs.getInt("welcomeStep", installedFresh() ? 1 : 0);
+                if (!prefs.contains("welcomeStep")) prefs.edit().putInt("welcomeStep", welcomeStep).apply();
+            }
             for (int id : PlanWidget.ids(this)) PlanWidget.settings(this, id);
         }
         String selection = widgetClass == null ? prefs.getString("url", "") : widgetClass.url;
@@ -120,7 +131,14 @@ public class MainActivity extends Activity {
             home = state.getBoolean("home", true);
             settings = state.getBoolean("settings", false);
             planWeek = LocalDate.ofEpochDay(state.getLong("planWeek", planWeek.toEpochDay()));
+            welcomePicker = welcomeStep == 1 && state.getBoolean("welcomePicker", false);
+            if (welcomePicker && state.containsKey("welcomeClassUrl")) {
+                welcomeClass = new SchoolPlan.ClassPlan(state.getString("welcomeClassName", ""),
+                        state.getString("welcomeClassUrl", ""));
+                if (welcomeClass.url.startsWith(SchoolPlan.BASE + "T/")) school = "T";
+            }
         }
+        if (welcomeStep == 3) settings = true;
         if (!isWidgetConfiguration()) openWidgetPlan(getIntent());
         if (state != null && !home && state.containsKey("previewUrl")) {
             previewClass = new SchoolPlan.ClassPlan(state.getString("previewName", ""), state.getString("previewUrl", ""));
@@ -144,15 +162,45 @@ public class MainActivity extends Activity {
         }
         prefs.registerOnSharedPreferenceChangeListener(listener);
         if (widgetPlan != null) widgetPlan.registerOnSharedPreferenceChangeListener(listener);
-        if (!picking) renderScreen();
-        if (firstStart && previewClass != null) loadPreview();
-        if (firstStart && updates != null) updates.check(false);
+        boolean starting = firstStart;
+        firstStart = false;
+        if (!picking) {
+            if (welcomePicker) showPicker(school);
+            else renderScreen();
+        }
+        if (starting && previewClass != null) loadPreview();
+        if (starting && getIntent().getBooleanExtra("standalonePlan", false)) animateContent();
+        if (starting) {
+            SchoolNotifications.channels(this);
+            RefreshJob.schedule(this);
+            if (welcomeStep == 0) checkOnLaunch();
+        }
         clock.postDelayed(updateHome, 60000 - System.currentTimeMillis() % 60000);
         boolean classPlan = !prefs.getString("url", "").startsWith("teacher:");
         if (prefs.contains("url") && ((classPlan && !prefs.contains("changes"))
                 || System.currentTimeMillis() - prefs.getLong("updated", 0) >= 15 * 60 * 1000L)) {
             RefreshJob.refresh(this);
         }
+    }
+
+    private boolean installedFresh() {
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return freshInstall(info.firstInstallTime, info.lastUpdateTime,
+                    prefs.contains("url") || prefs.contains("notificationsAsked"));
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+            return false;
+        }
+    }
+
+    static boolean freshInstall(long firstInstalled, long lastUpdated, boolean previouslyOpened) {
+        return firstInstalled > 0 && firstInstalled == lastUpdated && !previouslyOpened;
+    }
+
+    private void checkOnLaunch() {
+        if (updates == null) return;
+        updates.check(false);
+        if (!prefs.getBoolean("notificationsAsked", false)) requestNotifications();
     }
 
     @Override public void onStop() {
@@ -177,8 +225,14 @@ public class MainActivity extends Activity {
             state.putString("previewUrl", previewClass.url);
         }
         state.putInt("widgetTheme", widgetTheme);
-        state.putBoolean("glassDark", glassDark);
-        state.putBoolean("glassLight", glassLight);
+        state.putBoolean("widgetGlass", widgetGlass);
+        state.putInt("widgetGlassOpacity", widgetGlassOpacity);
+        state.putBoolean("widgetGlassEdge", widgetGlassEdge);
+        state.putBoolean("welcomePicker", welcomePicker);
+        if (welcomeClass != null) {
+            state.putString("welcomeClassName", welcomeClass.name);
+            state.putString("welcomeClassUrl", welcomeClass.url);
+        }
         if (widgetClass != null) {
             state.putString("widgetClassName", widgetClass.name);
             state.putString("widgetClassUrl", widgetClass.url);
@@ -254,12 +308,20 @@ public class MainActivity extends Activity {
     }
 
     private void goHome() {
+        boolean finishedWelcome = welcomeStep != 0;
+        if (finishedWelcome) {
+            welcomeStep = 0;
+            welcomePicker = false;
+            welcomeClass = null;
+            prefs.edit().putInt("welcomeStep", 0).apply();
+        }
         clearPreview();
         clearWidgetPlan();
         settings = false;
         home = true;
         renderHome();
         animateContent();
+        if (finishedWelcome) checkOnLaunch();
     }
 
     private void renderScreen() {
@@ -268,9 +330,45 @@ public class MainActivity extends Activity {
             pickerRefresh = null;
             finishRefresh();
         }
-        if (settings) renderSettings();
+        if (welcomeStep == 1 || welcomeStep == 2) renderWelcome();
+        else if (settings) renderSettings();
         else if (home) renderHome();
         else renderPlan();
+    }
+
+    private void renderWelcome() {
+        picking = false;
+        welcomePicker = false;
+        root.removeAllViews();
+        AppMotion.localBack(this, root, this::onBackPressed, false);
+        content = scrollContent();
+        addTop(content, label("MicekApp", 16, ACCENT, true), 30);
+        if (welcomeStep == 1) {
+            addTop(content, label("Witaj w MicekApp!", 30, INK, true), 12);
+            message(content, "Twój plan lekcji", "Wybierz klasę, aby zobaczyć lekcje i zastępstwa.");
+            Button next = button("Wybierz swoją klasę", SELECTED, ACCENT);
+            next.setOnClickListener(view -> {
+                AppMotion.remember(this, root);
+                welcomePicker = true;
+                showPicker(school.equals("T") ? "T" : "LO");
+            });
+            addTop(content, next, 15);
+        } else {
+            addTop(content, label("Dostosuj aplikację do siebie", 28, INK, true), 12);
+            message(content, "Klasa " + shortName(prefs.getString("name", "")),
+                    "W ustawieniach dopasujesz wygląd, powiadomienia i widżety.");
+            Button settingsButton = button("Przejdź do ustawień", SELECTED, ACCENT);
+            settingsButton.setOnClickListener(view -> {
+                AppMotion.remember(this, root);
+                welcomeStep = 3;
+                settings = true;
+                prefs.edit().putInt("welcomeStep", 3).apply();
+                renderSettings();
+                animateContent();
+            });
+            addTop(content, settingsButton, 15);
+        }
+        animateContent();
     }
 
     private SharedPreferences visiblePlan() {
@@ -460,10 +558,6 @@ public class MainActivity extends Activity {
         menuRow("▤", "Plan lekcji", this::openPlan, "↻", "Zastępstwa", () -> section("zastepstwa"));
         menuRow("♫", "Radiowęzeł", () -> section("radio"), "◈", "Spotted", () -> section("spotted"));
         menuRow("%", "Progi ocen", () -> section("progi"), "◷", "Dyżury", () -> section("dyzury"));
-        menuButton("Kalkulator średniej", () -> {
-            startActivity(new Intent(this, AverageActivity.class));
-            AppMotion.transition(this);
-        });
         renderAnnouncements(date);
         ScrollView scroll = (ScrollView) content.getParent();
         if (scrollY > 0) scroll.post(() -> scroll.scrollTo(0, scrollY));
@@ -505,7 +599,7 @@ public class MainActivity extends Activity {
                 loadingNoticesDate = null;
                 refreshingNotices = false;
                 finishRefresh();
-                if (home && !settings && !picking) renderHome();
+                if (welcomeStep == 0 && home && !settings && !picking) renderHome();
             });
         });
     }
@@ -516,7 +610,7 @@ public class MainActivity extends Activity {
             pickerRefresh.run();
         } else if (!home && !settings && previewClass != null) {
             loadPreview();
-        } else if (settings) {
+        } else if (settings || welcomeStep != 0) {
             PullRefresh current = pull;
             current.postDelayed(current::finish, 300);
         } else {
@@ -595,20 +689,37 @@ public class MainActivity extends Activity {
         root.addView(toolbar);
         content = scrollContent();
         int current = AppColors.appMode(this);
+        GlassSettings appEffect = GlassSettings.read(prefs, "appGlass", current);
         addTop(content, label("Motyw aplikacji", 16, INK, true), 15);
         themeChoices(content, () -> AppColors.appMode(this), choice -> {
-            prefs.edit().putInt("appTheme", choice).apply();
+            SharedPreferences.Editor edit = prefs.edit().putInt("appTheme", choice);
+            appEffect.save(edit, "appGlass");
+            edit.apply();
             applyColors();
             renderSettings();
         });
         android.widget.Switch glass = glassSwitch();
         updateGlass(glass, current, AppColors.appGlass(this));
         glass.setOnCheckedChangeListener((view, enabled) -> {
-            prefs.edit().putBoolean(AppColors.appGlassKey(current), enabled).apply();
+            prefs.edit().putBoolean("appGlass", enabled).putInt("appGlassOpacity", appEffect.opacity)
+                    .putBoolean("appGlassEdge", appEffect.edge).apply();
             applyColors();
             renderSettings();
         });
         addTop(content, glass, 4);
+        if (AppColors.appGlass(this)) {
+            LinearLayout options = column();
+            addTop(content, options, 2);
+            glassControls(options, appEffect.opacity, appEffect.edge,
+                    value -> {
+                        prefs.edit().putInt("appGlassOpacity", value).apply();
+                        renderSettings();
+                    }, edge -> {
+                        prefs.edit().putBoolean("appGlassEdge", edge).apply();
+                        renderSettings();
+                    });
+        }
+        addTop(content, label("Personalizacja planu lekcji", 16, INK, true), 18);
         String name = prefs.getString("name", "");
         if (!name.isEmpty()) addTop(content, label("Wybrany plan · " + name, 15, MUTED, false), 12);
         menuButton("Zmień wybór klasy", () -> showPicker(school.equals("room") ? "LO" : school));
@@ -627,7 +738,7 @@ public class MainActivity extends Activity {
             PlanWidget.render(this);
         });
         addTop(content, label("Język obcy", 16, INK, true), 16);
-        addSegments(content, new String[]{"Oba", "Rosyjski", "Niemiecki"},
+        addSegments(content, new String[]{"Brak", "Niemiecki", "Rosyjski"},
                 () -> prefs.getInt("languageChoice", 0), choice -> {
                     prefs.edit().putInt("languageChoice", choice).apply();
                     PlanWidget.render(this);
@@ -646,8 +757,64 @@ public class MainActivity extends Activity {
             prefs.edit().putBoolean("performanceMode", enabled).apply();
             AppMotion.localBack(this, root, this::onBackPressed, true);
         });
+        addTop(content, label("Odświeżanie danych", 16, INK, true), 18);
+        addSegments(content, new String[]{"15 min", "30 min", "45 min", "60 min"},
+                () -> prefs.getInt("refreshMinutes", 15) / 15 - 1, choice -> {
+                    prefs.edit().putInt("refreshMinutes", (choice + 1) * 15).apply();
+                    RefreshJob.schedule(this);
+                });
+        addTop(content, label("Powiadomienia", 16, INK, true), 18);
+        if (!SchoolNotifications.allowed(this)) menuButton("Włącz powiadomienia", this::requestNotifications);
+        notificationSwitch("Nowe posty na Spotted", SchoolNotifications.POSTS);
+        notificationSwitch("Komentarze do obserwowanych postów", SchoolNotifications.COMMENTS);
+        notificationSwitch("Zmiany w moim planie", SchoolNotifications.PLAN);
         menuButton("Dodaj widżet", this::pinWidget);
         if (updates != null) menuButton("Sprawdź aktualizacje", () -> updates.check(true));
+        try {
+            String version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            addTop(content, label("Aktualna wersja · " + version, 13, MUTED, false), 12);
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {}
+        if (welcomeStep == 3) {
+            LinearLayout footer = column();
+            footer.setPadding(dp(20), dp(8), dp(20), dp(12));
+            Button done = button("Przejdź do ekranu głównego", SELECTED, ACCENT);
+            done.setOnClickListener(view -> goHome());
+            footer.addView(done);
+            root.addView(footer);
+        }
+    }
+
+    private void notificationSwitch(String name, String channel) {
+        android.widget.Switch toggle = new android.widget.Switch(this);
+        toggle.setText(name);
+        toggle.setTextColor(INK);
+        toggle.setMinHeight(dp(48));
+        toggle.setChecked(SchoolNotifications.enabled(this, channel));
+        addTop(content, toggle, 4);
+        toggle.setOnCheckedChangeListener((view, checked) -> {
+            prefs.edit().putBoolean("notify_" + channel, checked).apply();
+            if (checked && !SchoolNotifications.allowed(this)) requestNotifications();
+            else if (checked) RefreshJob.refresh(this);
+        });
+    }
+
+    private void requestNotifications() {
+        boolean asked = prefs.getBoolean("notificationsAsked", false);
+        prefs.edit().putBoolean("notificationsAsked", true).apply();
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED
+                && (!asked || shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS))) {
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 51);
+        } else if (asked && !SchoolNotifications.allowed(this)) {
+            startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
+        }
+    }
+
+    @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(request, permissions, results);
+        if (request == 51 && SchoolNotifications.allowed(this)) RefreshJob.refresh(this);
     }
 
     private void menuButton(String name, Runnable action) {
@@ -818,7 +985,7 @@ public class MainActivity extends Activity {
         header.setPadding(dp(20), dp(16), dp(20), dp(12));
         root.addView(header);
         if (!isWidgetConfiguration()) {
-            Button back = button(previewPicking ? "‹  Plan lekcji" : "‹  Ustawienia", PANEL, ACCENT);
+            Button back = button(welcomePicker ? "‹  Witaj" : previewPicking ? "‹  Plan lekcji" : "‹  Ustawienia", PANEL, ACCENT);
             header.addView(back);
             back.setOnClickListener(view -> renderScreen());
         }
@@ -828,7 +995,7 @@ public class MainActivity extends Activity {
         if (isWidgetConfiguration()) addWidgetThemes(header);
         LinearLayout tabs = row();
         addTop(header, tabs, 12);
-        String[] options = isWidgetConfiguration() ? new String[]{"LO", "T"}
+        String[] options = isWidgetConfiguration() || welcomePicker ? new String[]{"LO", "T"}
                 : previewPicking ? new String[]{"LO", "T", "teacher", "room"} : new String[]{"LO", "T", "teacher"};
         for (String option : options) {
             boolean selected = option.equals(kind);
@@ -867,6 +1034,16 @@ public class MainActivity extends Activity {
         });
 
         if (isWidgetConfiguration()) addWidgetFooter();
+        else if (welcomePicker) {
+            LinearLayout footer = column();
+            footer.setPadding(dp(20), dp(8), dp(20), dp(12));
+            welcomeConfirm = button("Zatwierdź wybór klasy", SELECTED, ACCENT);
+            welcomeConfirm.setEnabled(welcomeClass != null);
+            welcomeConfirm.setAlpha(welcomeClass == null ? 0.5f : 1);
+            welcomeConfirm.setOnClickListener(view -> { if (welcomeClass != null) select(welcomeClass); });
+            footer.addView(welcomeConfirm);
+            root.addView(footer);
+        }
         pickerRefresh = () -> loadClasses(kind, requested, results, search);
         pickerRefresh.run();
     }
@@ -902,12 +1079,18 @@ public class MainActivity extends Activity {
 
     private void addWidgetThemes(LinearLayout header) {
         android.widget.Switch glass = glassSwitch();
+        LinearLayout controls = column();
+        Runnable update = () -> {
+            setWidgetGlass(glass, controls);
+            widgetGlassControls(controls);
+        };
         themeChoices(header, () -> widgetTheme, mode -> {
             widgetTheme = mode;
-            setWidgetGlass(glass);
+            update.run();
         });
-        setWidgetGlass(glass);
+        update.run();
         addTop(header, glass, 4);
+        addTop(header, controls, 0);
     }
 
     private void themeChoices(LinearLayout parent, java.util.function.IntSupplier selected,
@@ -953,13 +1136,58 @@ public class MainActivity extends Activity {
         glass.setChecked(available && checked);
     }
 
-    private void setWidgetGlass(android.widget.Switch glass) {
+    private void setWidgetGlass(android.widget.Switch glass, LinearLayout controls) {
         glass.setOnCheckedChangeListener(null);
-        updateGlass(glass, widgetTheme, widgetTheme == AppColors.LIGHT ? glassLight : glassDark);
+        updateGlass(glass, widgetTheme, widgetGlass);
         glass.setOnCheckedChangeListener((view, checked) -> {
-            if (widgetTheme == AppColors.LIGHT) glassLight = checked;
-            else if (widgetTheme == AppColors.DARK) glassDark = checked;
+            widgetGlass = checked;
+            widgetGlassControls(controls);
         });
+    }
+
+    private void widgetGlassControls(LinearLayout controls) {
+        controls.removeAllViews();
+        boolean enabled = widgetTheme != AppColors.AMOLED && widgetGlass;
+        controls.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        if (enabled) {
+            glassControls(controls, widgetGlassOpacity, widgetGlassEdge,
+                    value -> widgetGlassOpacity = value, edge -> widgetGlassEdge = edge);
+        }
+    }
+
+    private void glassControls(LinearLayout parent, int opacity, boolean edge, java.util.function.IntConsumer changeOpacity,
+                               java.util.function.Consumer<Boolean> changeEdge) {
+        TextView caption = label("Krycie tła · " + opacity + "%", 13, MUTED, false);
+        addTop(parent, caption, 0);
+        android.widget.SeekBar slider = new android.widget.SeekBar(this);
+        slider.setContentDescription("Krycie tła Liquid Glass");
+        slider.setMin(65);
+        slider.setMax(100);
+        slider.setProgress(opacity);
+        slider.setProgressTintList(ColorStateList.valueOf(ACCENT));
+        slider.setProgressBackgroundTintList(ColorStateList.valueOf(EDGE));
+        slider.setSplitTrack(false);
+        slider.setPadding(dp(18), 0, dp(18), 0);
+        slider.setMinHeight(dp(44));
+        GradientDrawable thumb = surface(ACCENT, 10);
+        thumb.setSize(dp(20), dp(20));
+        slider.setThumb(thumb);
+        slider.setBackground(surface(PANEL, 14));
+        slider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar seek, int value, boolean user) {
+                caption.setText("Krycie tła · " + value + "%");
+                if (user && !seek.isPressed()) changeOpacity.accept(value);
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar seek) {}
+            @Override public void onStopTrackingTouch(android.widget.SeekBar seek) { changeOpacity.accept(seek.getProgress()); }
+        });
+        addTop(parent, slider, 1);
+        android.widget.Switch outline = new android.widget.Switch(this);
+        outline.setText("Wyraźniejsza krawędź");
+        outline.setTextColor(INK);
+        outline.setChecked(edge);
+        outline.setOnCheckedChangeListener((view, checked) -> changeEdge.accept(checked));
+        addTop(parent, outline, 0);
     }
 
     private void themeSegment(Button button, boolean selected) {
@@ -992,6 +1220,7 @@ public class MainActivity extends Activity {
             String[] parts = entry.name.split("\\s+", 2);
             String text = school.equals("teacher") ? entry.name : parts.length == 2 ? parts[0] + "  ·  " + parts[1] : parts[0];
             boolean selected = isWidgetConfiguration() ? widgetClass != null && entry.url.equals(widgetClass.url)
+                    : welcomePicker ? welcomeClass != null && entry.url.equals(welcomeClass.url)
                     : entry.url.equals(previewPicking
                             ? (previewClass == null ? visiblePlan().getString("url", "") : previewClass.url)
                             : prefs.getString("url", ""));
@@ -1004,6 +1233,11 @@ public class MainActivity extends Activity {
                     widgetClass = entry;
                     widgetSave.setEnabled(true);
                     widgetSave.setAlpha(1f);
+                    renderClasses(results, query);
+                } else if (welcomePicker) {
+                    welcomeClass = entry;
+                    welcomeConfirm.setEnabled(true);
+                    welcomeConfirm.setAlpha(1f);
                     renderClasses(results, query);
                 } else if (previewPicking) showPreview(entry);
                 else select(entry);
@@ -1019,11 +1253,17 @@ public class MainActivity extends Activity {
             return;
         }
         SharedPreferences.Editor edit = prefs.edit().putString("name", entry.name).putString("url", entry.url);
+        if (welcomePicker) {
+            welcomePicker = false;
+            welcomeStep = 2;
+            edit.putInt("welcomeStep", 2);
+        }
         if (isWidgetConfiguration()) edit.putInt("widgetTheme", widgetTheme)
-                .putBoolean("glassDark", glassDark).putBoolean("glassLight", glassLight);
+                .putBoolean("glass", widgetGlass).putInt("glassOpacity", widgetGlassOpacity)
+                .putBoolean("glassEdge", widgetGlassEdge).putLong("widgetConfiguredAt", System.currentTimeMillis());
         if (!entry.url.equals(prefs.getString("url", ""))) {
             edit.remove("week").remove("updated").remove("error").remove("liveClassId")
-                    .remove("changes").remove("changesError");
+                    .remove("changes").remove("changesError").remove("teacherAlerts");
         }
         edit.apply();
         if (isWidgetConfiguration()) {
@@ -1060,11 +1300,27 @@ public class MainActivity extends Activity {
     }
 
     private void pinWidget() {
-        new android.app.AlertDialog.Builder(this, light ? android.R.style.Theme_Material_Light_Dialog_Alert
-                : android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("Wybierz widżet").setItems(new String[]{"Plan dnia", "Najbliższa lekcja"},
-                        (dialog, which) -> pinWidget(which == 0 ? PlanWidget.class : NextLessonWidget.class))
-                .show();
+        android.app.Dialog dialog = new android.app.Dialog(this);
+        LinearLayout panel = column();
+        panel.setBackground(surface(PANEL, 23));
+        panel.setPadding(dp(18), dp(16), dp(18), dp(18));
+        addTop(panel, label("Wybierz widżet", 21, INK, true), 0);
+        Button plan = button("Plan dnia", SELECTED, ACCENT);
+        plan.setOnClickListener(view -> { dialog.dismiss(); pinWidget(PlanWidget.class); });
+        addTop(panel, plan, 14);
+        Button next = button("Najbliższa lekcja", SELECTED, ACCENT);
+        next.setOnClickListener(view -> { dialog.dismiss(); pinWidget(NextLessonWidget.class); });
+        addTop(panel, next, 8);
+        Button cancel = button("Anuluj", PANEL, INK);
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        addTop(panel, cancel, 10);
+        dialog.setContentView(panel);
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+            dialog.getWindow().setLayout(Math.min(dp(430), getResources().getDisplayMetrics().widthPixels - dp(32)), -2);
+            AppMotion.enter(panel);
+        }
     }
 
     private void pinWidget(Class<?> provider) {
@@ -1123,12 +1379,10 @@ public class MainActivity extends Activity {
 
     private GradientDrawable surface(int fill, int radius) {
         GradientDrawable shape = new GradientDrawable();
-        if (appGlass && fill == PANEL) {
-            shape.setOrientation(GradientDrawable.Orientation.TL_BR);
-            shape.setColors(light ? new int[]{0xF5FFFFFF, 0xD5E4EDFF} : new int[]{0xC52C3954, 0xC31A2336});
-        } else shape.setColor(fill);
         shape.setCornerRadius(dp(radius));
         shape.setStroke(dp(1), EDGE);
+        if (appGlass && fill == PANEL) AppColors.glassPanel(this, shape, light, dp(1));
+        else shape.setColor(fill);
         return shape;
     }
 

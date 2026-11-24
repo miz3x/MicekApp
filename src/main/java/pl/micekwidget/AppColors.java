@@ -20,11 +20,24 @@ final class AppColors {
 
     static boolean appGlass(Context context) {
         int mode = appMode(context);
-        return mode != AMOLED && SchoolPlan.prefs(context).getBoolean(appGlassKey(mode), false);
+        return mode != AMOLED && GlassSettings.read(SchoolPlan.prefs(context), "appGlass", mode).enabled;
     }
 
-    static String appGlassKey(int mode) {
-        return mode == LIGHT ? "appGlassLight" : "appGlassDark";
+    static String glassSuffix(int mode) { return mode == LIGHT ? "Light" : "Dark"; }
+
+    static void glassPanel(Context context, android.graphics.drawable.GradientDrawable shape, boolean light, int stroke) {
+        android.content.SharedPreferences prefs = SchoolPlan.prefs(context);
+        GlassSettings glass = GlassSettings.read(prefs, "appGlass", appMode(context));
+        int opacity = glass.opacity;
+        int[] gradient = light ? new int[]{0xF5FFFFFF, 0xD5E4EDFF} : new int[]{0xC52C3954, 0xC31A2336};
+        for (int i = 0; i < gradient.length; i++) {
+            gradient[i] = (gradient[i] & 0xFFFFFF) | (((gradient[i] >>> 24) * opacity / 100) << 24);
+        }
+        shape.setOrientation(android.graphics.drawable.GradientDrawable.Orientation.TL_BR);
+        shape.setColors(gradient);
+        if (glass.edge) {
+            shape.setStroke(stroke * 2, light ? 0xFFFFFFFF : 0xACABCBFF);
+        }
     }
 
     AppColors(boolean light) {

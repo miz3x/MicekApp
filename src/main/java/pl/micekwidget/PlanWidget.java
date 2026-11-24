@@ -37,7 +37,6 @@ public class PlanWidget extends AppWidgetProvider {
 
     @Override public void onDisabled(Context context) {
         if (ids(context).length != 0) return;
-        RefreshJob.cancelPeriodic(context);
         context.getSystemService(AlarmManager.class).cancel(clock(context));
     }
 
@@ -70,15 +69,30 @@ public class PlanWidget extends AppWidgetProvider {
     static synchronized SharedPreferences settings(Context context, int id) {
         SharedPreferences settings = context.getSharedPreferences(settingsName(id), Context.MODE_PRIVATE);
         if (settings.contains("name")) return settings;
-        SharedPreferences app = SchoolPlan.prefs(context);
-        String url = app.getString("url", "");
+        SharedPreferences source = SchoolPlan.prefs(context);
+        long newest = -1;
+        for (int other : ids(context)) {
+            if (other == id) continue;
+            SharedPreferences existing = context.getSharedPreferences(settingsName(other), Context.MODE_PRIVATE);
+            if (!existing.getString("url", "").startsWith(SchoolPlan.BASE)) continue;
+            long saved = existing.getLong("widgetConfiguredAt", 0);
+            if (saved <= newest) continue;
+            source = existing;
+            newest = saved;
+        }
+        String url = source.getString("url", "");
         SharedPreferences.Editor edit = settings.edit().putString("name", "");
         if (url.startsWith(SchoolPlan.BASE)) {
-            edit.putString("url", url).putString("name", app.getString("name", ""));
-            if (app.contains("liveClassId")) edit.putString("liveClassId", app.getString("liveClassId", ""));
-            if (app.contains("week")) edit.putString("week", app.getString("week", ""));
-            if (app.contains("changes")) edit.putString("changes", app.getString("changes", ""));
-            edit.putLong("updated", app.getLong("updated", 0));
+            edit.putString("url", url).putString("name", source.getString("name", ""));
+            if (source.contains("liveClassId")) edit.putString("liveClassId", source.getString("liveClassId", ""));
+            if (source.contains("week")) edit.putString("week", source.getString("week", ""));
+            if (source.contains("changes")) edit.putString("changes", source.getString("changes", ""));
+            edit.putLong("updated", source.getLong("updated", 0));
+        }
+        if (newest >= 0) {
+            int theme = themeMode(source);
+            edit.putInt("widgetTheme", theme);
+            GlassSettings.read(source, "glass", theme).save(edit, "glass");
         }
         edit.apply();
         return settings;
@@ -205,9 +219,10 @@ public class PlanWidget extends AppWidgetProvider {
                             AppColors colors, LocalDate date, ZonedDateTime now) {
             RemoteViews.RemoteCollectionItems.Builder rows = new RemoteViews.RemoteCollectionItems.Builder()
                     .setViewTypeCount(1);
+            int upcoming = PlanDay.upcomingIndex(lessons, date, now);
             for (int i = 0; i < lessons.size(); i++) {
                 LivePlan.Lesson lesson = lessons.get(i);
-                rows.addItem(i, WidgetLessons.row(context, lesson, colors, PlanDay.active(lesson, date, now)));
+                rows.addItem(i, WidgetLessons.row(context, lesson, colors, PlanDay.active(lesson, date, now), i == upcoming));
             }
             views.setRemoteAdapter(R.id.widget_lessons, rows.build());
         }
@@ -223,10 +238,16 @@ public class PlanWidget extends AppWidgetProvider {
 
     static void style(RemoteViews views, AppColors colors, SharedPreferences prefs) {
         int mode = themeMode(prefs);
+        GlassSettings effect = GlassSettings.read(prefs, "glass", mode);
+        boolean glass = mode != AppColors.AMOLED && effect.enabled;
         int background = mode == AppColors.AMOLED ? R.drawable.widget_bg_amoled
-                : colors.light ? (prefs.getBoolean("glassLight", false) ? R.drawable.widget_glass_light : R.drawable.widget_bg_light)
-                : (prefs.getBoolean("glassDark", false) ? R.drawable.widget_glass_dark : R.drawable.widget_bg);
+                : colors.light ? (glass ? R.drawable.widget_glass_light : R.drawable.widget_bg_light)
+                : (glass ? R.drawable.widget_glass_dark : R.drawable.widget_bg);
         views.setImageViewResource(R.id.widget_background, background);
+        views.setInt(R.id.widget_background, "setImageAlpha", glass ? Math.round(255 * effect.opacity / 100f) : 255);
+        views.setImageViewResource(R.id.widget_glass_edge, colors.light ? R.drawable.glass_edge_light : R.drawable.glass_edge_dark);
+        views.setViewVisibility(R.id.widget_glass_edge, glass && effect.edge
+                ? android.view.View.VISIBLE : android.view.View.GONE);
         if (views.getLayoutId() != R.layout.widget_next_tiny) {
             views.setTextColor(R.id.widget_title, colors.text);
             views.setTextColor(R.id.widget_configure, colors.accent);

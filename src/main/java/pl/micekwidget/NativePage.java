@@ -150,12 +150,10 @@ abstract class NativePage extends Activity {
 
     GradientDrawable shape(int color, int radius) {
         GradientDrawable drawable = new GradientDrawable();
-        if (color == colors.panel && AppColors.appGlass(this)) {
-            drawable.setOrientation(GradientDrawable.Orientation.TL_BR);
-            drawable.setColors(colors.light ? new int[]{0xF5FFFFFF, 0xD5E4EDFF} : new int[]{0xC52C3954, 0xC31A2336});
-        } else drawable.setColor(color);
         drawable.setCornerRadius(dp(radius));
         drawable.setStroke(dp(1), colors.border);
+        if (color == colors.panel && AppColors.appGlass(this)) AppColors.glassPanel(this, drawable, colors.light, dp(1));
+        else drawable.setColor(color);
         return drawable;
     }
 
